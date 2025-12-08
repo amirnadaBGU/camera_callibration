@@ -4,6 +4,7 @@ import glob
 import os
 import json
 import matplotlib.pyplot as plt
+import shutil  # <--- הוספנו את הספרייה הזו להעברת קבצים
 
 # ==========================================
 #              הגדרות משתמש
@@ -77,6 +78,12 @@ def get_images_and_points(folder_name):
     """ פונקציית עזר לטעינת תמונות ומציאת פינות """
     subpix_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1)
 
+    # יצירת תיקיית try אם אינה קיימת
+    failed_dir = os.path.join(folder_name, 'try')
+    if not os.path.exists(failed_dir):
+        os.makedirs(failed_dir)
+        print(f"[INFO] Created directory for failed images: {failed_dir}")
+
     # הכנת נקודות 3D
     objp = np.zeros((1, CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
     objp[0, :, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
@@ -85,7 +92,7 @@ def get_images_and_points(folder_name):
     imgpoints = []
 
     # תמיכה בפורמטים שונים
-    exts = ['*.jpg', '*.png', '*.jpeg', '*.JPG']
+    exts = ['*.jpg', '*.png', '*.jpeg']
     images = []
     for ext in exts:
         images.extend(glob.glob(os.path.join(folder_name, ext)))
@@ -113,7 +120,15 @@ def get_images_and_points(folder_name):
             valid_images.append(os.path.basename(fname))
             print(f"[+] Found: {os.path.basename(fname)}")
         else:
+            # === לוגיקת העברה לתיקיית try ===
             print(f"[-] No corners: {os.path.basename(fname)}")
+            try:
+                dst_path = os.path.join(failed_dir, os.path.basename(fname))
+                shutil.move(fname, dst_path)
+                print(f"    -> Moved to: {dst_path}")
+            except Exception as e:
+                print(f"    -> Error moving file: {e}")
+            # ===============================
 
     return objpoints, imgpoints, img_shape, valid_images
 
@@ -122,7 +137,7 @@ def run_calibration():
     objpoints, imgpoints, img_shape, _ = get_images_and_points('images')
 
     if not objpoints:
-        print("No valid images found in 'images' folder.")
+        print("No valid images found in 'images' folder (or all were moved to 'try').")
         return
 
     plot_coverage_matplotlib(imgpoints, img_shape, "Calibration Coverage")
