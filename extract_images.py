@@ -78,7 +78,7 @@ if not mp4_files:
 else:
     VIDEO_FILE = mp4_files[0]
     OUTPUT_DIR = "images"
-    TIME_INTERVAL = 0.3  # כל כמה שניות לדגום
-    BLUR_THRESHOLD = 1.0  # סף החדות
+    TIME_INTERVAL = 0.5  # כל כמה שניות לדגום
+    BLUR_THRESHOLD = 5  # סף החדות
 
     extract_frames(VIDEO_FILE, OUTPUT_DIR, TIME_INTERVAL, BLUR_THRESHOLD)

@@ -262,4 +262,4 @@ def calibrate(showPics=True, complexity_mode="simple"):
 
 
 if __name__ == '__main__':
-    calibrate(showPics=True, complexity_mode="simple")
+    calibrate(showPics=True, complexity_mode="complex")
