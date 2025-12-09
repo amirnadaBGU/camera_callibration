@@ -74,7 +74,143 @@ def plot_coverage_matplotlib(imgPtsList, imgShape, title='Coverage Map'):
     plt.show()
 
 
+import cv2
+import numpy as np
+import glob
+import os
+import shutil
+
+
 def get_images_and_points(folder_name):
+    """
+    גרסה משופרת עם דיאגנוסטיקה: מסבירה למה תמונות נכשלו.
+    """
+    # הגדרות הלוח
+    # CHECKERBOARD = (6, 9)
+
+    subpix_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1)
+
+    # יצירת תיקיית כישלונות
+    failed_dir = os.path.join(folder_name, 'failed_detection')
+    if not os.path.exists(failed_dir):
+        os.makedirs(failed_dir)
+
+    # קובץ לוג לשמירת הסיבות
+    log_file_path = os.path.join(failed_dir, "failures_log.txt")
+    # מנקים את הלוג הישן בתחילת ריצה
+    with open(log_file_path, "w") as f:
+        f.write("Failure Analysis Log:\n=====================\n")
+
+    # הכנת נקודות 3D
+    objp = np.zeros((1, CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
+    objp[0, :, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
+
+    objpoints = []
+    imgpoints = []
+
+    # טעינת תמונות
+    exts = ['*.jpg', '*.png', '*.jpeg', '*.JPG']
+    images = []
+    for ext in exts:
+        images.extend(glob.glob(os.path.join(folder_name, ext)))
+    images = list(set(images))
+
+    if not images:
+        return None, None, None, []
+
+    print(f"Scanning {len(images)} unique images in '{folder_name}'...")
+    img_shape = None
+    valid_images = []
+
+    # === כלי עבודה ===
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+    kernel_dilate = np.ones((3, 3), np.uint8)
+
+    # --- פונקציית עזר לאבחון כישלון ---
+    def analyze_fail_reason(image_gray):
+        # חישוב נתונים סטטיסטיים
+        mean_val = np.mean(image_gray)
+        std_val = np.std(image_gray)  # סטיית תקן מייצגת קונטרסט
+
+        reason = "Unknown"
+
+        if mean_val < 40:
+            reason = "Too Dark (Under-exposed)"
+        elif mean_val > 220:
+            reason = "Too Bright (Over-exposed)"
+        elif std_val < 20:
+            reason = "Low Contrast (Murky water/Fog)"
+        else:
+            # אם התאורה והקונטרסט סבירים, הבעיה היא בדרך כלל גיאומטרית
+            reason = "Geometry/Occlusion (Crop, Rope, Blur, or Angle)"
+
+        return reason, mean_val, std_val
+
+    for fname in images:
+        img = cv2.imread(fname)
+        if img is None: continue
+
+        gray_orig = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_shape = gray_orig.shape[::-1]
+
+        found = False
+        corners = None
+
+        # === Pipeline Attempts ===
+        norm_img = cv2.normalize(gray_orig, None, 0, 255, cv2.NORM_MINMAX)
+        clahe_img = clahe.apply(gray_orig)
+        dilated_img = cv2.dilate(clahe_img, kernel_dilate, iterations=1)
+        _, binary_img = cv2.threshold(gray_orig, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        morph_img = cv2.morphologyEx(binary_img, cv2.MORPH_CLOSE, kernel_dilate)
+
+        attempts = [
+            ("Original", gray_orig),
+            ("Normalize", norm_img),
+            ("CLAHE", clahe_img),
+            ("Dilate", dilated_img),
+            ("Binary Morph", morph_img)
+        ]
+
+        find_flags = cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE
+
+        for method_name, processed_img in attempts:
+            ret, corners = cv2.findChessboardCorners(processed_img, CHECKERBOARD, find_flags)
+
+            if ret:
+                print(f"[+] Found: {os.path.basename(fname)} | Method: {method_name}")
+                objpoints.append(objp)
+
+                refine_src = gray_orig
+                if method_name in ["Binary Morph", "Dilate"]:
+                    refine_src = clahe_img
+
+                # הגדלנו את החלון ל-11 כדי להתגבר על תזוזות מהפילטרים
+                corners2 = cv2.cornerSubPix(refine_src, corners, (11, 11), (-1, -1), subpix_criteria)
+                imgpoints.append(corners2)
+                valid_images.append(os.path.basename(fname))
+                found = True
+                break
+
+        if not found:
+            # --- ניתוח הסיבה לכישלון ---
+            reason_str, mean_v, std_v = analyze_fail_reason(gray_orig)
+
+            msg = f"[-] FAILED: {os.path.basename(fname)} | Suspect: {reason_str} (Bright: {mean_v:.1f}, Contrast: {std_v:.1f})"
+            print(msg)
+
+            # כתיבה ללוג
+            with open(log_file_path, "a") as f:
+                f.write(f"{os.path.basename(fname)}: {reason_str}\n")
+
+            try:
+                dst_path = os.path.join(failed_dir, os.path.basename(fname))
+                shutil.move(fname, dst_path)
+            except Exception:
+                pass
+
+    return objpoints, imgpoints, img_shape, valid_images
+
+def get_images_and_points_original(folder_name):
     """ פונקציית עזר לטעינת תמונות ומציאת פינות """
     subpix_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1)
 
