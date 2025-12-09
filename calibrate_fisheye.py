@@ -246,7 +246,7 @@ def get_images_and_points_original(folder_name):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_shape = gray.shape[::-1]
 
-        ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD,
+        ret, corners = cv2.findChessboardCornersSB(gray, CHECKERBOARD,
                                                  cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE)
 
         if ret:
