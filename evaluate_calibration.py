@@ -5,11 +5,11 @@ import glob
 import json
 import shutil
 import pickle
-import matplotlib.pyplot as plt  # וודא שמותקן: pip install matplotlib
+import matplotlib.pyplot as plt
 
 # ==========================================
 #              הגדרות משתמש
-# ==========================================
+# ===============images===========================
 CALIB_FILE = 'fisheye_calib_data.json'
 IMAGE_FOLDER = 'images'
 CACHE_FILE = 'corners_cache_tracked.pkl'
@@ -17,11 +17,11 @@ CHECKERBOARD = (6, 9)
 WORST_PERCENTAGE = 0.20  # 20%
 
 # הגדרת תיקיות המחיקה
-DELETE_ROOT = 'TO_DELETE'  # תיקיית האב
-DIR_CENTER = 'CENTER_JUNK'  # תת-תיקייה 1: זבל במרכז
-DIR_EDGE = 'EDGE_RARE'  # תת-תיקייה 2: שגיאה בקצוות (חשוב לבדוק!)
+DELETE_ROOT = 'TO_DELETE'
+DIR_CENTER = 'CENTER_JUNK'
+DIR_EDGE = 'EDGE_RARE'
 
-# כמה אחוז מהתמונה נחשב "מרכז"? (0.25 אומר שמשאירים רבע שוליים מכל צד)
+# הגדרת שוליים למרכז (0.25 = רבע מכל צד)
 CENTER_MARGIN = 0.25
 
 
@@ -35,8 +35,9 @@ def load_calibration_data(filename):
     with open(filename, 'r') as f:
         data = json.load(f)
 
-    K = np.array(data['K'])
-    D = np.array(data['D'])
+    # המרה ל-numpy arrays וטיפול בטיפוסים
+    K = np.array(data['K'], dtype=np.float64)
+    D = np.array(data['D'], dtype=np.float64)
     img_shape = tuple(data['img_shape'])
     return K, D, img_shape
 
@@ -76,6 +77,7 @@ def main():
             os.makedirs(p)
 
     # 3. הכנת אובייקט תלת-ממדי
+    # עבור fisheye בדרך כלל עדיף (1, N, 3)
     objp = np.zeros((1, CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
     objp[0, :, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
 
@@ -94,14 +96,18 @@ def main():
                 else:
                     corners_cache[key] = val
             print(f"[Info] Loaded {len(corners_cache)} entries.")
-        except:
+        except Exception as e:
+            print(f"[Warning] Cache load failed: {e}")
             corners_cache = {}
 
     # 4. איסוף תמונות
     images = glob.glob(os.path.join(IMAGE_FOLDER, '*.jpg')) + \
              glob.glob(os.path.join(IMAGE_FOLDER, '*.png'))
 
-    if not images: return
+    if not images:
+        print("[Error] No images found.")
+        return
+
     print(f"Scanning {len(images)} images...")
 
     valid_objpoints = []
@@ -109,9 +115,11 @@ def main():
     valid_filenames = []
     cache_needs_saving = False
 
+    # דגלים לזיהוי לוח שחמט - דיוק מקסימלי
     sb_flags = cv2.CALIB_CB_EXHAUSTIVE + cv2.CALIB_CB_ACCURACY + cv2.CALIB_CB_NORMALIZE_IMAGE
 
     for fname in images:
+        # דילוג על תמונות שכבר בתיקיית המחיקה
         if DELETE_ROOT in fname: continue
 
         fname_key = os.path.basename(fname)
@@ -124,14 +132,19 @@ def main():
         else:
             img = cv2.imread(fname)
             if img is None: continue
+
+            # בדיקת רזולוציה - קריטי לכיול!
+            if img.shape[:2][::-1] != expected_shape:
+                print(f"[Skip] Size mismatch: {fname}")
+                continue
+
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            if gray.shape[::-1] != expected_shape: continue
 
             ret, corners = cv2.findChessboardCornersSB(gray, CHECKERBOARD, sb_flags)
             if ret:
                 corners_cache[fname_key] = {'corners': corners, 'last_error': None}
                 cache_needs_saving = True
-                print(f"[New] {fname_key}")
+                print(f"[New] Found corners: {fname_key}")
 
         if ret:
             valid_objpoints.append(objp)
@@ -143,18 +156,33 @@ def main():
             pickle.dump(corners_cache, f)
 
     if not valid_objpoints:
-        print("No valid corners found.")
+        print("No valid corners found in any image.")
         return
 
-    # 5. חישוב שגיאות
+    # 5. חישוב שגיאות מחדש (שלב התיקון הקריטי)
+    # אנחנו משתמשים בכיול רק כדי לקבל את ה-rvecs ו-tvecs לכל תמונה
+    # שימי לב: אנחנו מקבעים את ה-K וה-D (FIX_INTRINSIC)
     flags = cv2.fisheye.CALIB_USE_INTRINSIC_GUESS | cv2.fisheye.CALIB_FIX_INTRINSIC | cv2.fisheye.CALIB_FIX_SKEW
-    N_OK = len(valid_objpoints)
-    rvecs = [np.zeros((1, 1, 3), dtype=np.float64) for i in range(N_OK)]
-    tvecs = [np.zeros((1, 1, 3), dtype=np.float64) for i in range(N_OK)]
 
-    print("Calculating errors...")
-    cv2.fisheye.calibrate(valid_objpoints, valid_imgpoints, expected_shape, K, D, rvecs, tvecs, flags,
-                          (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-6))
+    N_OK = len(valid_objpoints)
+
+    print(f"Calculating reprojection errors for {N_OK} images...")
+
+    # --- התיקון הגדול כאן ---
+    # הפונקציה מחזירה את הוקטורים החדשים. חייבים לשמור אותם!
+    rms, _, _, rvecs_new, tvecs_new = cv2.fisheye.calibrate(
+        valid_objpoints,
+        valid_imgpoints,
+        expected_shape,
+        K,
+        D,
+        None,  # rvecs output (לא חובה כפרמטר כניסה בפייתון)
+        None,  # tvecs output
+        flags,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-6)
+    )
+
+    print(f"Global RMS Error (calibration quality): {rms:.4f} pixels")
 
     errors_list = []
     improved = 0
@@ -162,10 +190,15 @@ def main():
 
     for i in range(N_OK):
         fname_key = os.path.basename(valid_filenames[i])
-        proj, _ = cv2.fisheye.projectPoints(valid_objpoints[i], rvecs[i], tvecs[i], K, D)
+
+        # שימוש בוקטורים הנכונים לכל תמונה
+        proj, _ = cv2.fisheye.projectPoints(valid_objpoints[i], rvecs_new[i], tvecs_new[i], K, D)
         proj = proj.reshape(valid_imgpoints[i].shape)
+
+        # חישוב שגיאה לתמונה בודדת
         err = cv2.norm(valid_imgpoints[i], proj, cv2.NORM_L2) / np.sqrt(len(proj))
 
+        # השוואה להיסטוריה (אופציונלי)
         prev_err = corners_cache[fname_key].get('last_error')
         if prev_err:
             if err < prev_err - 0.001:
@@ -176,16 +209,17 @@ def main():
         corners_cache[fname_key]['last_error'] = err
         errors_list.append({'file': valid_filenames[i], 'error': err, 'corners': valid_imgpoints[i]})
 
+    # שמירת עדכון שגיאות למטמון
     with open(CACHE_FILE, 'wb') as f:
         pickle.dump(corners_cache, f)
 
     print(f"\n--- REPORT ---")
-    print(f"Improved: {improved} | Worsened: {worsened}")
+    print(f"Improved vs cached: {improved} | Worsened vs cached: {worsened}")
 
-    # 6. מיון
+    # 6. מיון וסינון
     errors_list.sort(key=lambda x: x['error'])
 
-    # חישוב הסף לחיתוך
+    # חיתוך האחוז הגרוע ביותר
     cut_index = int(len(errors_list) * (1 - WORST_PERCENTAGE))
     files_to_delete = errors_list[cut_index:]
 
@@ -194,14 +228,18 @@ def main():
         return
 
     threshold_val = files_to_delete[0]['error']
-    print(f"Deleting {len(files_to_delete)} worst images (Threshold: {threshold_val:.2f} px)")
+    print(f"Marking {len(files_to_delete)} worst images for deletion (Threshold: {threshold_val:.2f} px)")
 
     # ==========================================
-    #       7. ציור היסטוגרמה (התווסף מחדש)
+    #       7. ציור היסטוגרמה
     # ==========================================
     all_errors = [x['error'] for x in errors_list]
     plt.figure(figsize=(10, 6))
-    plt.hist(all_errors, bins=40, color='skyblue', edgecolor='black', alpha=0.7)
+
+    # טווח דינמי כדי שהגרף יראה טוב גם אם יש חריגים
+    max_range = min(max(all_errors), 20.0)  # מגביל תצוגה ל-20 פיקסלים אלא אם הכל גרוע
+    plt.hist(all_errors, bins=40, range=(0, max_range), color='skyblue', edgecolor='black', alpha=0.7)
+
     plt.axvline(threshold_val, color='red', linestyle='dashed', linewidth=2,
                 label=f'Threshold ({threshold_val:.2f} px)')
 
@@ -212,9 +250,11 @@ def main():
     plt.grid(axis='y', alpha=0.5)
 
     print("Displaying histogram... Close the window to proceed with moving files.")
-    plt.show()  # התוכנית תעצור כאן עד שתסגור את החלון
-    # ==========================================
+    plt.show()
 
+    # ==========================================
+    #       8. הזזת קבצים
+    # ==========================================
     print("\nSorting into folders based on location...")
 
     moved_center = 0
@@ -233,19 +273,20 @@ def main():
         else:
             dst_folder = path_edge
             moved_edge += 1
-            type_tag = "EDGE/RARE"
+            type_tag = "EDGE"
 
         dst = os.path.join(dst_folder, filename)
 
         try:
             shutil.move(src, dst)
-            print(f" [{type_tag}] Error: {item['error']:.2f}px -> {filename}")
+            # הדפסה מקוצרת כדי לא להציף את המסך
+            # print(f" [{type_tag}] Error: {item['error']:.2f}px -> {filename}")
         except Exception as e:
-            print(f" [Err] {e}")
+            print(f" [Err moving {filename}] {e}")
 
     print(f"\nDone.")
     print(f"Moved to {DIR_CENTER}: {moved_center}")
-    print(f"Moved to {DIR_EDGE}:   {moved_edge} ( <-- Check these! )")
+    print(f"Moved to {DIR_EDGE}:   {moved_edge}")
 
 
 if __name__ == "__main__":
