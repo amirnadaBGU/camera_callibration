@@ -151,14 +151,21 @@ def get_images_and_points(folder_name):
 
         # === בדיקה ב-CACHE ===
         if fname_key in corners_cache:
-            # נמצא בזיכרון - מדלגים על חישוב
-            cached_corners = corners_cache[fname_key]
+            cache_data = corners_cache[fname_key]
+
+            # --- התיקון כאן: חילוץ המערך מתוך המילון אם צריך ---
+            if isinstance(cache_data, dict) and 'corners' in cache_data:
+                # המידע הגיע מסקריפט הסינון (מילון)
+                cached_corners = cache_data['corners']
+            else:
+                # המידע הגיע מהסקריפט הזה (מערך ישיר)
+                cached_corners = cache_data
+            # ----------------------------------------------------
+
             objpoints.append(objp)
-            imgpoints.append(cached_corners)
+            imgpoints.append(cached_corners)  # עכשיו זה בטוח numpy array
             valid_images.append(fname_key)
 
-            # אם צריך, נעדכן את img_shape מהתמונה הראשונה ב-cache
-            # (אבל בדרך כלל עדיף לקרוא תמונה אחת לפחות כדי לקבל shape אמיתי)
             if img_shape is None:
                 temp_img = cv2.imread(fname)
                 if temp_img is not None:
@@ -238,7 +245,6 @@ def get_images_and_points(folder_name):
 
     return objpoints, imgpoints, img_shape, valid_images
 
-
 def run_calibration():
     objpoints, imgpoints, img_shape, _ = get_images_and_points('images')
 
@@ -248,7 +254,7 @@ def run_calibration():
 
     plot_coverage_matplotlib(imgpoints, img_shape, "Calibration Coverage")
 
-    calibration_flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC + cv2.fisheye.CALIB_CHECK_COND + cv2.fisheye.CALIB_FIX_SKEW
+    calibration_flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC  + cv2.fisheye.CALIB_FIX_SKEW + cv2.fisheye.CALIB_CHECK_COND
 
     N_OK = len(objpoints)
     K = np.zeros((3, 3))
