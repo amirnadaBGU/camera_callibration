@@ -37,7 +37,6 @@ def save_calibration_data(K, D, img_shape, filename=CALIB_FILE):
         json.dump(data, f, indent=4)
     print(f"\n[V] Calibration data saved to '{filename}'")
 
-
 def load_calibration_data(filename=CALIB_FILE):
     if not os.path.exists(filename):
         print(f"[ERROR] File '{filename}' not found. Run CALIBRATE first.")
@@ -51,7 +50,6 @@ def load_calibration_data(filename=CALIB_FILE):
     img_shape = tuple(data['img_shape'])
     print(f"[V] Loaded calibration data from '{filename}'")
     return K, D, img_shape
-
 
 def plot_coverage_matplotlib(imgPtsList, imgShape, title='Coverage Map'):
     width = imgShape[0]
@@ -74,7 +72,6 @@ def plot_coverage_matplotlib(imgPtsList, imgShape, title='Coverage Map'):
     plt.grid(True, linestyle=':', alpha=0.6)
     print(">> Displaying Map... Close graph to continue.")
     plt.show()
-
 
 def get_images_and_points(folder_name):
     """
@@ -273,7 +270,6 @@ def run_calibration():
     print(f"--------------------------------")
     save_calibration_data(K, D, img_shape)
 
-
 def run_validation():
     K, D, expected_shape = load_calibration_data()
     if K is None: return
@@ -305,7 +301,6 @@ def run_validation():
 
     print(f"Validation RMS: {rms:.4f} px")
     # ... (המשך קוד הוולידציה נשאר זהה) ...
-
 
 def run_test_image():
     # ... (קוד הטסט נשאר זהה) ...
