@@ -320,9 +320,6 @@ def run_test_image():
     cv2.imwrite("result_undistort.jpg", undistorted)
     print("Saved result_undistort.jpg")
 
-
-# ==========================================
-#                   MAIN
 # ==========================================
 if __name__ == "__main__":
     if OPERATION_MODE == "CALIBRATE":
